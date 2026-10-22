@@ -1,0 +1,108 @@
+{
+  "models": [
+    {
+      "slug": "qwen3.8-max",
+      "display_name": "Qwen 3.8 Max",
+      "description": "旗舰千问模型，适合复杂代码、规划与长任务",
+      "default_reasoning_level": "xhigh",
+      "supported_reasoning_levels": [
+        {"effort": "none", "description": "关闭深度思考，响应最快"},
+        {"effort": "low", "description": "轻量推理"},
+        {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "xhigh", "description": "最强推理，适合复杂任务"}
+      ],
+      "context_window": 1000000,
+      "effective_context_window_percent": 80,
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "base_instructions": "",
+      "support_verbosity": false,
+      "supports_reasoning_summaries": false,
+      "experimental_supported_tools": [],
+      "truncation_policy": {"mode": "bytes", "limit": 10000}
+    },
+    {
+      "slug": "qwen3.8-flash",
+      "display_name": "Qwen 3.8 Flash",
+      "description": "速度与成本优先，适合日常编码和高频任务",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {"effort": "none", "description": "关闭深度思考，响应最快"},
+        {"effort": "low", "description": "轻量推理"},
+        {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "xhigh", "description": "增强复杂任务推理"}
+      ],
+      "context_window": 1000000,
+      "effective_context_window_percent": 80,
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 2,
+      "base_instructions": "",
+      "support_verbosity": false,
+      "supports_reasoning_summaries": false,
+      "experimental_supported_tools": [],
+      "truncation_policy": {"mode": "bytes", "limit": 10000}
+    },
+    {
+      "slug": "qwen3.7-plus",
+      "display_name": "Qwen 3.7 Plus",
+      "description": "能力与成本均衡，适合通用开发工作",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {"effort": "none", "description": "关闭深度思考，响应最快"},
+        {"effort": "low", "description": "轻量推理"},
+        {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "xhigh", "description": "增强复杂任务推理"}
+      ],
+      "context_window": 1000000,
+      "effective_context_window_percent": 80,
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 3,
+      "base_instructions": "",
+      "support_verbosity": false,
+      "supports_reasoning_summaries": false,
+      "experimental_supported_tools": [],
+      "truncation_policy": {"mode": "bytes", "limit": 10000}
+    },
+    {
+      "slug": "qwen3.7-flash",
+      "display_name": "Qwen 3.7 Flash",
+      "description": "低成本快速模型，适合简单修改与批量任务",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {"effort": "none", "description": "关闭深度思考，响应最快"},
+        {"effort": "low", "description": "轻量推理"},
+        {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "xhigh", "description": "增强复杂任务推理"}
+      ],
+      "context_window": 1000000,
+      "effective_context_window_percent": 80,
+      "supports_parallel_tool_calls": false,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 4,
+      "base_instructions": "",
+      "support_verbosity": false,
+      "supports_reasoning_summaries": false,
+      "experimental_supported_tools": [],
+      "truncation_policy": {"mode": "bytes", "limit": 10000}
+    }
+  ]
+}

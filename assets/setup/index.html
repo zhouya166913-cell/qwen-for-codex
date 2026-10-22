@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Qwen for Codex 设置</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!--
+      THESIS: 把一次不透明的配置修改变成可见的连接校准流程，拒绝居中的单字段 SaaS 卡片。
+      OWN-WORLD: 日光工作台底色、深蓝结构面、钴蓝操作色、绿色完成态；细刻度、状态灯和整齐的设备铭牌构成组件语言。
+      STORY: 检测 Codex，接收 API Key，验证阿里云线路，安装千问模型，最后明确提示重启。
+      FIRST VIEWPORT: 左侧是持续可见的四段连接路线，右侧以大标题、唯一输入框和主按钮占据操作中心，结果在原位接替表单。
+      FORM: 连接校准台，候选方向 4，seed 60075376。
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+    -->
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Qwen for Codex 设置首页">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span>Qwen for Codex</span>
+        </a>
+        <div class="device-state" id="deviceState" role="status">
+          <span class="state-light" aria-hidden="true"></span>
+          <span id="deviceStateText">正在检测 Codex</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="route-panel" aria-labelledby="routeTitle">
+          <div>
+            <h2 id="routeTitle">连接路线</h2>
+            <p>从你的 API Key 到 Codex 模型选择器，只经过这台电脑。</p>
+          </div>
+
+          <ol class="route" id="routeList">
+            <li class="route-step is-active" data-step="1">
+              <span class="step-index" aria-hidden="true">1</span>
+              <span><strong>识别 Codex</strong><small>确认配置位置</small></span>
+            </li>
+            <li class="route-step" data-step="2">
+              <span class="step-index" aria-hidden="true">2</span>
+              <span><strong>检测 API Key</strong><small>向阿里云发送最小测试</small></span>
+            </li>
+            <li class="route-step" data-step="3">
+              <span class="step-index" aria-hidden="true">3</span>
+              <span><strong>安装千问模型</strong><small>自动备份并写入配置</small></span>
+            </li>
+            <li class="route-step" data-step="4">
+              <span class="step-index" aria-hidden="true">4</span>
+              <span><strong>重新打开 Codex</strong><small>原生模型列表立即生效</small></span>
+            </li>
+          </ol>
+
+          <div class="privacy-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7.5 10V7.5a4.5 4.5 0 0 1 9 0V10M6 10h12v10H6z" />
+            </svg>
+            <p><strong>Key 留在本机</strong><br />保存到系统凭据库，不会进入项目或 GitHub。</p>
+          </div>
+        </aside>
+
+        <section class="setup-panel" aria-labelledby="pageTitle">
+          <div id="setupView">
+            <h1 id="pageTitle">让 Codex 用上千问</h1>
+            <p class="lead">粘贴阿里云百炼 API Key。检测、备份和模型安装都由我们完成。</p>
+
+            <form id="setupForm" novalidate>
+              <label for="apiKey">阿里云百炼 API Key</label>
+              <div class="key-field">
+                <input
+                  id="apiKey"
+                  name="apiKey"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  inputmode="text"
+                  placeholder="sk-..."
+                  aria-describedby="keyHelp formMessage"
+                  required
+                />
+                <button class="reveal-button" id="revealKey" type="button" aria-label="显示 API Key">显示</button>
+              </div>
+              <div class="field-support" id="keyHelp">
+                <span>没有 Key？</span>
+                <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noreferrer">前往阿里云百炼获取</a>
+              </div>
+
+              <button class="primary-button" id="installButton" type="submit">
+                <span class="button-label">立即接入 Codex</span>
+                <span class="button-progress" aria-hidden="true"></span>
+              </button>
+              <p class="form-message" id="formMessage" role="alert" aria-live="polite"></p>
+            </form>
+
+            <div class="installed-note" id="installedNote" hidden>
+              <div>
+                <strong>这台电脑已接入千问</strong>
+                <p>重新输入 Key 可以更新凭据，不会重复添加配置。</p>
+              </div>
+              <button class="text-button" id="showRestore" type="button">恢复原来的 Codex 配置</button>
+              <div class="restore-confirm" id="restoreConfirm" hidden>
+                <p>只移除本工具添加的千问配置，其他 Codex 设置会保留。</p>
+                <div>
+                  <button class="secondary-button" id="cancelRestore" type="button">取消</button>
+                  <button class="danger-button" id="restoreButton" type="button">确认恢复</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="model-bench" aria-labelledby="modelsTitle">
+              <div class="bench-heading">
+                <h2 id="modelsTitle">将出现在模型列表中</h2>
+                <span>4 个模型</span>
+              </div>
+              <ul>
+                <li><strong>Qwen 3.8 Max</strong><span>复杂代码与长任务</span></li>
+                <li><strong>Qwen 3.8 Flash</strong><span>日常开发，响应更快</span></li>
+                <li><strong>Qwen 3.7 Plus</strong><span>能力与成本均衡</span></li>
+                <li><strong>Qwen 3.7 Flash</strong><span>简单修改与高频任务</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="success-view" id="successView" hidden tabindex="-1">
+            <div class="success-signal" aria-hidden="true">
+              <svg viewBox="0 0 64 64"><path d="m18 33 9 9 20-22" /></svg>
+            </div>
+            <h1>千问已经接入 Codex</h1>
+            <p>配置和 API Key 都已安全保存。现在只差最后一步。</p>
+            <div class="restart-instruction">
+              <span>关闭 Codex</span>
+              <svg viewBox="0 0 40 20" aria-hidden="true"><path d="M2 10h34M29 3l7 7-7 7" /></svg>
+              <span>重新打开</span>
+            </div>
+            <p class="restart-note">重新打开后，默认使用 Qwen 3.8 Max。点击输入框下方的模型名称，可以切换其他千问模型。</p>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <span id="environmentText">正在读取本机环境…</span>
+        <span>本地设置页 · 不上传 API Key</span>
+      </footer>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

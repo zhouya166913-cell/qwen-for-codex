@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.DS_Store
+Thumbs.db
+.runtime/
+.playwright-cli/
+.impeccable/config.local.json
+.impeccable/mocks/
+.impeccable/review/
