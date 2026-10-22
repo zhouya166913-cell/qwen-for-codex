@@ -1,12 +1,14 @@
 # Qwen for Codex
 
+> 当前版本：v0.1.0 试用版。已经完成本地配置、恢复、Windows/macOS 启动和自动化测试；首次交付建议先让少量客户验证实际 Codex 对话与工具调用。
+
 只粘贴一次阿里云百炼 API Key，就能把千问加入 Codex 原生模型选择器。客户不需要打开终端、不需要修改配置文件，也不需要先安装开发环境。
 
 ## 使用方法
 
 ### 第一步：下载并解压
 
-点击 [下载 Qwen for Codex](https://github.com/zhouya166913-cell/qwen-for-codex/archive/refs/heads/main.zip)，下载完成后先解压 ZIP，不能直接在压缩包里运行。
+点击 [下载 Qwen for Codex v0.1.0](https://github.com/zhouya166913-cell/qwen-for-codex/releases/download/v0.1.0/Qwen-for-Codex-v0.1.0.zip)，下载完成后先解压 ZIP，不能直接在压缩包里运行。
 
 ### 第二步：双击启动
 
@@ -47,7 +49,7 @@
 - 将默认模型切换为 Qwen 3.8 Max。
 - 支持重复运行更新 Key，并可一键恢复原配置。
 
-API Key 不会写进项目、GitHub、浏览器存储或 Codex 配置文件。
+API Key 只会发送给阿里云百炼，用于验证和后续模型调用；不会经过我们的服务器，也不会写进项目、GitHub、浏览器存储或 Codex 配置文件。
 
 ## 支持范围
 
@@ -77,7 +79,7 @@ Codex 只在启动时读取模型目录。请完全退出 Codex，再重新打�
 - 设置服务只监听 `127.0.0.1`，不会暴露到局域网。
 - 写操作同时校验随机会话令牌、Host 和 Origin。
 - 页面使用严格 CSP，不加载第三方脚本、字体或分析代码。
-- API Key 不进入命令行参数和日志。
+- API Key 不进入本工具日志；Windows 不通过命令行参数传递，macOS 交由系统 `security` 工具写入钥匙串。
 - Windows 与 macOS 均使用系统凭据存储，写入失败会停止配置，不会降级成明文文件。
 - 修改配置前先备份；重复运行不会堆叠重复配置。
 

@@ -38,6 +38,7 @@ from lib.config_manager import (  # noqa: E402
 
 DEFAULT_BASE_URL = PUBLIC_ENDPOINTS["beijing"]
 DEFAULT_MODEL = "qwen3.8-max"
+VERSION = "0.1.0"
 MAX_BODY = 64 * 1024
 SERVER_LIFETIME_SECONDS = 20 * 60
 
@@ -72,7 +73,7 @@ def validate_api_key(api_key: str, timeout: int = 45) -> dict[str, Any]:
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "qwen-for-codex/1.0",
+            "User-Agent": f"qwen-for-codex/{VERSION}",
         },
     )
     try:
@@ -112,7 +113,7 @@ class SetupServer(ThreadingHTTPServer):
 
 class SetupHandler(BaseHTTPRequestHandler):
     server: SetupServer
-    server_version = "QwenForCodexSetup/1.0"
+    server_version = f"QwenForCodexSetup/{VERSION}"
 
     def log_message(self, format: str, *args: object) -> None:
         safe_args = tuple("<redacted>" if "sk-" in str(arg) else arg for arg in args)
