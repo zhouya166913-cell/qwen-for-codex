@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import json
 import getpass
+import hashlib
+import json
 import os
 import platform
 import re
 import shutil
 import subprocess
 import tempfile
-import time
 import tomllib
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from .credential_store import delete_secret, read_secret, store_secret
+from .credential_store import delete_secret, read_secret, read_secret_for_update, store_secret
 
 
 DEFAULTS_BEGIN = "# >>> qwen-for-codex defaults >>>"
@@ -23,13 +24,24 @@ PROVIDER_BEGIN = "# >>> qwen-for-codex provider >>>"
 PROVIDER_END = "# <<< qwen-for-codex provider <<<"
 MANAGED_KEYS = ("model", "model_provider", "model_reasoning_effort", "model_catalog_json")
 PROVIDER_ID = "qwen_model_studio"
-VALID_MODELS = {
-    "qwen3.8-max",
-    "qwen3.8-flash",
-    "qwen3.8-27b",
-    "qwen3.7-plus",
-    "qwen3.7-flash",
+MODE_DIRECT = "direct"
+MODE_AGGREGATE = "aggregate"
+DEFAULT_MODE = MODE_DIRECT
+MODE_CONFIG: dict[str, dict[str, str]] = {
+    MODE_DIRECT: {
+        "label": "仅千问",
+        "catalog_filename": "qwen-model-catalog.json",
+        "provider_name": "Alibaba Cloud Model Studio · Qwen",
+        "default_model": "qwen3.8-max",
+    },
+    MODE_AGGREGATE: {
+        "label": "聚合模型",
+        "catalog_filename": "aggregate-model-catalog.json",
+        "provider_name": "Alibaba Cloud Model Studio · Qwen / DeepSeek / GLM",
+        "default_model": "qwen3.8-max",
+    },
 }
+VALID_MODES = frozenset(MODE_CONFIG)
 REGION_HOSTS = {
     "beijing": "cn-beijing.maas.aliyuncs.com",
     "singapore": "ap-southeast-1.maas.aliyuncs.com",
@@ -45,6 +57,10 @@ PUBLIC_ENDPOINTS = {
 
 
 class ConfigError(RuntimeError):
+    pass
+
+
+class OperationBusyError(ConfigError):
     pass
 
 
@@ -91,6 +107,84 @@ def _atomic_write(path: Path, content: str) -> None:
             temporary_path.unlink()
 
 
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+@contextmanager
+def _operation_lock(target_dir: Path) -> Iterator[None]:
+    """Serialize configuration changes across tabs and launcher processes."""
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = target_dir / "operation.lock"
+    stream = lock_path.open("a+b")
+    locked = False
+    try:
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise OperationBusyError("另一个配置操作正在进行，请稍后再试。") from exc
+        locked = True
+        yield
+    finally:
+        if locked:
+            try:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        stream.close()
+
+
+def _snapshot_text(path: Path) -> tuple[bool, str]:
+    return (True, path.read_text(encoding="utf-8")) if path.exists() else (False, "")
+
+
+def _restore_text(path: Path, snapshot: tuple[bool, str]) -> None:
+    existed, content = snapshot
+    if existed:
+        _atomic_write(path, content)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _restore_credential(previous_secret: str | None, target_dir: Path) -> None:
+    if previous_secret:
+        store_secret(previous_secret, target_dir)
+    else:
+        delete_secret(target_dir)
+
+
 def _strip_marked_block(text: str, begin: str, end: str) -> str:
     lines = text.splitlines(keepends=True)
     output: list[str] = []
@@ -128,7 +222,7 @@ def _remove_top_level_keys(text: str) -> tuple[str, dict[str, str]]:
     pattern = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
     for line in lines:
         stripped = line.lstrip()
-        if stripped.startswith("[") and not stripped.startswith("[["):
+        if stripped.startswith("["):
             in_table = True
         match = pattern.match(line)
         if not in_table and match and match.group(1) in MANAGED_KEYS:
@@ -172,30 +266,131 @@ def _load_state(target_dir: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(path.read_text(encoding="utf-8"))
+        return state if isinstance(state, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _load_state_for_update(target_dir: Path, *, managed_config: bool) -> dict[str, Any]:
+    path = target_dir / "state.json"
+    if not path.exists():
+        if managed_config:
+            raise ConfigError(
+                "检测到本工具配置，但恢复信息已丢失。为避免覆盖原配置，本次未执行；"
+                f"请先检查备份目录：{target_dir / 'backups'}"
+            )
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(
+            "恢复信息已损坏。为避免覆盖原配置，本次未执行；"
+            f"请先检查备份目录：{target_dir / 'backups'}"
+        ) from exc
+    if not isinstance(state, dict):
+        raise ConfigError("恢复信息格式无效，本次未修改 Codex 配置。")
+    if managed_config and not isinstance(state.get("previous_top_level"), dict):
+        raise ConfigError(
+            "恢复信息不完整。为避免无法还原 ChatGPT 配置，本次未执行；"
+            f"请先检查备份目录：{target_dir / 'backups'}"
+        )
+    return state
 
 
 def _write_state(target_dir: Path, state: dict[str, Any]) -> None:
     _atomic_write(target_dir / "state.json", json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 
-def _copy_runtime_files(source_root: Path, target_dir: Path) -> tuple[Path, str, list[str]]:
+def _mode_config(mode: str) -> dict[str, str]:
+    config = MODE_CONFIG.get(mode)
+    if config is None:
+        raise ConfigError("不支持的接入方式，请刷新设置页后重试")
+    return config
+
+
+def _load_catalog(source_root: Path, mode: str) -> tuple[Path, dict[str, Any]]:
+    mode_config = _mode_config(mode)
+    catalog_path = source_root / "assets" / mode_config["catalog_filename"]
+    if not catalog_path.is_file():
+        raise ConfigError(f"安装资源缺失：{catalog_path.name}")
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"模型目录无效：{catalog_path.name}") from exc
+    models = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(models, list) or not models:
+        raise ConfigError(f"模型目录无效：{catalog_path.name}")
+    seen: set[str] = set()
+    for item in models:
+        if not isinstance(item, dict):
+            raise ConfigError(f"模型目录无效：{catalog_path.name}")
+        slug = item.get("slug")
+        display_name = item.get("display_name")
+        description = item.get("description")
+        if (
+            not isinstance(slug, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", slug)
+            or not isinstance(display_name, str)
+            or not display_name.strip()
+            or not isinstance(description, str)
+            or not description.strip()
+            or slug in seen
+        ):
+            raise ConfigError(f"模型目录无效：{catalog_path.name}")
+        seen.add(slug)
+    if mode_config["default_model"] not in seen:
+        raise ConfigError(f"模型目录缺少默认模型：{mode_config['default_model']}")
+    return catalog_path, catalog
+
+
+def catalog_summaries(source_root: Path) -> dict[str, dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for mode in (MODE_AGGREGATE, MODE_DIRECT):
+        _, catalog = _load_catalog(source_root, mode)
+        mode_config = _mode_config(mode)
+        summaries[mode] = {
+            "label": mode_config["label"],
+            "default_model": mode_config["default_model"],
+            "models": [
+                {
+                    "slug": item["slug"],
+                    "display_name": item["display_name"],
+                    "description": item["description"],
+                }
+                for item in catalog["models"]
+            ],
+        }
+    return summaries
+
+
+def _content_addressed_copy(source: Path, target_dir: Path, stem: str) -> Path:
+    try:
+        content = source.read_bytes()
+    except OSError as exc:
+        raise ConfigError(f"安装资源无法读取：{source.name}") from exc
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    target = target_dir / f"{stem}-{digest}{source.suffix}"
+    if not target.exists() or target.read_bytes() != content:
+        _atomic_write_bytes(target, content)
+    return target
+
+
+def _copy_runtime_files(
+    source_root: Path, target_dir: Path, mode: str
+) -> tuple[Path, str, list[str]]:
+    catalog_source, _ = _load_catalog(source_root, mode)
     target_dir.mkdir(parents=True, exist_ok=True)
-    catalog_source = source_root / "assets" / "qwen-model-catalog.json"
-    catalog_target = target_dir / "model-catalog.json"
-    if not catalog_source.exists():
-        raise ConfigError(f"安装资源缺失：{catalog_source.name}")
-    shutil.copy2(catalog_source, catalog_target)
+    catalog_target = _content_addressed_copy(catalog_source, target_dir, f"model-catalog-{mode}")
 
     system = platform.system()
     if system == "Windows":
         helper_source = source_root / "scripts" / "runtime" / "read_windows_credential.ps1"
-        helper_target = target_dir / "read_windows_credential.ps1"
         if not helper_source.exists():
             raise ConfigError(f"安装资源缺失：{helper_source.name}")
-        shutil.copy2(helper_source, helper_target)
+        helper_target = _content_addressed_copy(
+            helper_source, target_dir, "read-windows-credential"
+        )
         return (
             catalog_target,
             "powershell.exe",
@@ -216,13 +411,13 @@ def _config_blocks(
     catalog_path: Path,
     auth_command: str,
     auth_args: list[str],
+    provider_name: str,
 ) -> tuple[str, str]:
     defaults = "\n".join(
         [
             DEFAULTS_BEGIN,
             f"model = {_toml_string(model)}",
             f"model_provider = {_toml_string(PROVIDER_ID)}",
-            'model_reasoning_effort = "xhigh"',
             f"model_catalog_json = {_toml_string(str(catalog_path))}",
             DEFAULTS_END,
         ]
@@ -231,7 +426,7 @@ def _config_blocks(
         [
             PROVIDER_BEGIN,
             f"[model_providers.{PROVIDER_ID}]",
-            'name = "Alibaba Cloud Model Studio · Qwen"',
+            f"name = {_toml_string(provider_name)}",
             f"base_url = {_toml_string(base_url)}",
             'wire_api = "responses"',
             "supports_websockets = false",
@@ -253,100 +448,186 @@ def install(
     source_root: Path,
     api_key: str,
     base_url: str,
-    model: str,
+    model: str | None = None,
+    mode: str = DEFAULT_MODE,
 ) -> dict[str, Any]:
-    if model not in VALID_MODELS:
+    mode_config = _mode_config(mode)
+    _, catalog = _load_catalog(source_root, mode)
+    selected_model = model or mode_config["default_model"]
+    valid_models = {item["slug"] for item in catalog["models"]}
+    if selected_model not in valid_models:
         raise ConfigError("不支持的默认模型")
     config_path = home / "config.toml"
     target_dir = runtime_dir(home)
-    current = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    _validate_toml(current)
-    state = _load_state(target_dir)
-    had_managed = DEFAULTS_BEGIN in current or PROVIDER_BEGIN in current
-    baseline = strip_managed_blocks(current)
-    if had_managed and state.get("previous_top_level"):
-        baseline = _restore_top_level(baseline, state["previous_top_level"])
-    baseline, detected_previous = _remove_top_level_keys(baseline)
-    previous = state.get("previous_top_level") if had_managed else detected_previous
-    if not isinstance(previous, dict):
-        previous = detected_previous
+    with _operation_lock(target_dir):
+        config_snapshot = _snapshot_text(config_path)
+        state_path = target_dir / "state.json"
+        state_snapshot = _snapshot_text(state_path)
+        current = config_snapshot[1]
+        _validate_toml(current)
+        had_managed = DEFAULTS_BEGIN in current or PROVIDER_BEGIN in current
+        state = _load_state_for_update(target_dir, managed_config=had_managed)
+        previous_secret = read_secret_for_update(target_dir)
 
-    parsed_baseline = tomllib.loads(baseline or "")
-    existing_provider = parsed_baseline.get("model_providers", {}).get(PROVIDER_ID)
-    if existing_provider:
-        raise ConfigError(f"配置中已存在未受本工具管理的提供商：{PROVIDER_ID}")
+        baseline = strip_managed_blocks(current)
+        if had_managed:
+            baseline = _restore_top_level(baseline, state["previous_top_level"])
+        baseline, detected_previous = _remove_top_level_keys(baseline)
+        previous = state.get("previous_top_level") if had_managed else detected_previous
+        if not isinstance(previous, dict):
+            previous = detected_previous
 
-    current_backup = _backup(config_path, target_dir / "backups")
-    baseline_backup = state.get("baseline_backup")
-    if not baseline_backup or not Path(baseline_backup).exists():
-        baseline_backup = str(current_backup)
+        parsed_baseline = tomllib.loads(baseline or "")
+        existing_provider = parsed_baseline.get("model_providers", {}).get(PROVIDER_ID)
+        if existing_provider:
+            raise ConfigError(f"配置中已存在未受本工具管理的提供商：{PROVIDER_ID}")
 
-    catalog_path, auth_command, auth_args = _copy_runtime_files(source_root, target_dir)
-    credential_method = store_secret(api_key, target_dir)
-    defaults, provider = _config_blocks(
-        base_url,
-        model,
-        catalog_path.resolve(),
-        auth_command,
-        auth_args,
-    )
-    merged = f"{defaults}\n\n{baseline.strip()}\n\n{provider}\n"
-    _validate_toml(merged)
-    _atomic_write(config_path, merged)
-    state = {
-        "schema": 1,
-        "installed_at": datetime.now(timezone.utc).isoformat(),
-        "baseline_backup": baseline_backup,
-        "latest_backup": str(current_backup),
-        "previous_top_level": previous,
-        "model": model,
-        "base_url": base_url,
-        "credential_method": credential_method,
-    }
-    _write_state(target_dir, state)
-    return {
-        "installed": True,
-        "model": model,
-        "base_url": base_url,
-        "backup": str(current_backup),
-        "credential_method": credential_method,
-        "config_path": str(config_path),
-        "restart_required": True,
-    }
+        catalog_path, auth_command, auth_args = _copy_runtime_files(source_root, target_dir, mode)
+        defaults, provider = _config_blocks(
+            base_url,
+            selected_model,
+            catalog_path.resolve(),
+            auth_command,
+            auth_args,
+            mode_config["provider_name"],
+        )
+        merged = f"{defaults}\n\n{baseline.strip()}\n\n{provider}\n"
+        _validate_toml(merged)
+
+        current_backup = _backup(config_path, target_dir / "backups")
+        baseline_backup = state.get("baseline_backup")
+        if not baseline_backup or not Path(baseline_backup).exists():
+            baseline_backup = str(current_backup)
+
+        credential_touched = False
+        config_write_started = False
+        try:
+            credential_touched = True
+            credential_method = store_secret(api_key, target_dir)
+            next_state = {
+                "schema": 2,
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+                "baseline_backup": baseline_backup,
+                "latest_backup": str(current_backup),
+                "previous_top_level": previous,
+                "mode": mode,
+                "model": selected_model,
+                "base_url": base_url,
+                "credential_method": credential_method,
+            }
+            _write_state(target_dir, next_state)
+            if _snapshot_text(config_path) != config_snapshot:
+                raise ConfigError("检测到 Codex 配置刚刚被其他程序修改，本次切换已取消。")
+            config_write_started = True
+            _atomic_write(config_path, merged)
+        except Exception as exc:
+            rollback_errors: list[str] = []
+            if config_write_started:
+                try:
+                    _restore_text(config_path, config_snapshot)
+                except Exception:
+                    rollback_errors.append("Codex 配置")
+            try:
+                _restore_text(state_path, state_snapshot)
+            except Exception:
+                rollback_errors.append("恢复信息")
+            if credential_touched:
+                try:
+                    _restore_credential(previous_secret, target_dir)
+                except Exception:
+                    rollback_errors.append("API Key")
+            if rollback_errors:
+                parts = "、".join(rollback_errors)
+                raise ConfigError(
+                    f"切换失败，且以下内容无法自动回滚：{parts}。请不要重开 Codex，先从备份恢复。"
+                ) from exc
+            raise
+
+        return {
+            "installed": True,
+            "mode": mode,
+            "model": selected_model,
+            "model_count": len(catalog["models"]),
+            "provider_name": mode_config["provider_name"],
+            "base_url": base_url,
+            "backup": str(current_backup),
+            "credential_method": credential_method,
+            "config_path": str(config_path),
+            "restart_required": True,
+        }
 
 
 def uninstall(home: Path, remove_credential: bool = True) -> dict[str, Any]:
     config_path = home / "config.toml"
     target_dir = runtime_dir(home)
-    state = _load_state(target_dir)
-    if not config_path.exists():
-        if remove_credential:
-            delete_secret(target_dir)
-        return {"installed": False, "changed": False}
-    current = config_path.read_text(encoding="utf-8")
-    _validate_toml(current)
-    has_managed_marker = any(
-        marker in current
-        for marker in (DEFAULTS_BEGIN, DEFAULTS_END, PROVIDER_BEGIN, PROVIDER_END)
-    )
-    if not has_managed_marker:
-        if remove_credential:
-            delete_secret(target_dir)
-        return {"installed": False, "changed": False}
-    cleaned = strip_managed_blocks(current)
-    cleaned, _ = _remove_top_level_keys(cleaned)
-    previous = state.get("previous_top_level", {})
-    if isinstance(previous, dict):
-        cleaned = _restore_top_level(cleaned, previous)
-    _validate_toml(cleaned)
-    backup = _backup(config_path, target_dir / "backups")
-    _atomic_write(config_path, cleaned.rstrip() + "\n")
-    if remove_credential:
-        delete_secret(target_dir)
-    state["uninstalled_at"] = datetime.now(timezone.utc).isoformat()
-    state["latest_backup"] = str(backup)
-    _write_state(target_dir, state)
-    return {"installed": False, "changed": True, "backup": str(backup), "restart_required": True}
+    with _operation_lock(target_dir):
+        config_snapshot = _snapshot_text(config_path)
+        state_path = target_dir / "state.json"
+        state_snapshot = _snapshot_text(state_path)
+        current = config_snapshot[1]
+        if current:
+            _validate_toml(current)
+        has_managed_marker = any(
+            marker in current
+            for marker in (DEFAULTS_BEGIN, DEFAULTS_END, PROVIDER_BEGIN, PROVIDER_END)
+        )
+        if not config_snapshot[0] or not has_managed_marker:
+            if remove_credential:
+                delete_secret(target_dir)
+            return {"installed": False, "changed": False}
+
+        state = _load_state_for_update(target_dir, managed_config=True)
+        previous_secret = read_secret_for_update(target_dir) if remove_credential else None
+        cleaned = strip_managed_blocks(current)
+        cleaned, _ = _remove_top_level_keys(cleaned)
+        cleaned = _restore_top_level(cleaned, state["previous_top_level"])
+        cleaned = cleaned.rstrip() + "\n"
+        _validate_toml(cleaned)
+        backup = _backup(config_path, target_dir / "backups")
+        next_state = dict(state)
+        next_state["uninstalled_at"] = datetime.now(timezone.utc).isoformat()
+        next_state["latest_backup"] = str(backup)
+
+        credential_touched = False
+        config_write_started = False
+        try:
+            if remove_credential:
+                credential_touched = True
+                delete_secret(target_dir)
+            _write_state(target_dir, next_state)
+            if _snapshot_text(config_path) != config_snapshot:
+                raise ConfigError("检测到 Codex 配置刚刚被其他程序修改，本次还原已取消。")
+            config_write_started = True
+            _atomic_write(config_path, cleaned)
+        except Exception as exc:
+            rollback_errors: list[str] = []
+            if config_write_started:
+                try:
+                    _restore_text(config_path, config_snapshot)
+                except Exception:
+                    rollback_errors.append("Codex 配置")
+            try:
+                _restore_text(state_path, state_snapshot)
+            except Exception:
+                rollback_errors.append("恢复信息")
+            if credential_touched:
+                try:
+                    _restore_credential(previous_secret, target_dir)
+                except Exception:
+                    rollback_errors.append("API Key")
+            if rollback_errors:
+                parts = "、".join(rollback_errors)
+                raise ConfigError(
+                    f"还原失败，且以下内容无法自动回滚：{parts}。请不要重开 Codex，先从备份恢复。"
+                ) from exc
+            raise
+
+        return {
+            "installed": False,
+            "changed": True,
+            "backup": str(backup),
+            "restart_required": True,
+        }
 
 
 def _codex_version() -> str | None:
@@ -359,22 +640,28 @@ def _codex_version() -> str | None:
         return None
 
 
-def status(home: Path) -> dict[str, Any]:
+def status(home: Path, source_root: Path | None = None) -> dict[str, Any]:
     config_path = home / "config.toml"
     target_dir = runtime_dir(home)
     text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     state = _load_state(target_dir)
     installed = DEFAULTS_BEGIN in text and PROVIDER_BEGIN in text
+    saved_mode = state.get("mode", DEFAULT_MODE)
+    mode = saved_mode if saved_mode in VALID_MODES else DEFAULT_MODE
     codex_version = _codex_version()
-    return {
+    result = {
         "installed": installed,
         "codex_detected": codex_version is not None,
         "codex_version": codex_version,
         "codex_home": str(home),
         "config_path": str(config_path),
         "credential_saved": bool(read_secret(target_dir)),
+        "mode": mode,
         "model": state.get("model"),
         "base_url": state.get("base_url"),
         "credential_method": state.get("credential_method"),
         "restart_required": False,
     }
+    if source_root is not None:
+        result["catalogs"] = catalog_summaries(source_root)
+    return result

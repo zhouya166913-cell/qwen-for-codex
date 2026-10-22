@@ -30,7 +30,7 @@
       "slug": "qwen3.8-flash",
       "display_name": "Qwen 3.8 Flash",
       "description": "速度与成本优先，适合日常编码和高频任务",
-      "default_reasoning_level": "medium",
+      "default_reasoning_level": "xhigh",
       "supported_reasoning_levels": [
         {"effort": "none", "description": "关闭深度思考，响应最快"},
         {"effort": "low", "description": "轻量推理"},
@@ -58,9 +58,9 @@
       "description": "能力与成本均衡，适合通用开发工作",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
-        {"effort": "none", "description": "关闭深度思考，响应最快"},
         {"effort": "low", "description": "轻量推理"},
         {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "high", "description": "深入推理，适合复杂任务"},
         {"effort": "xhigh", "description": "增强复杂任务推理"}
       ],
       "context_window": 1000000,
@@ -82,11 +82,11 @@
       "slug": "qwen3.7-flash",
       "display_name": "Qwen 3.7 Flash",
       "description": "低成本快速模型，适合简单修改与批量任务",
-      "default_reasoning_level": "low",
+      "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
-        {"effort": "none", "description": "关闭深度思考，响应最快"},
         {"effort": "low", "description": "轻量推理"},
         {"effort": "medium", "description": "平衡速度与推理深度"},
+        {"effort": "high", "description": "深入推理，适合复杂任务"},
         {"effort": "xhigh", "description": "增强复杂任务推理"}
       ],
       "context_window": 1000000,

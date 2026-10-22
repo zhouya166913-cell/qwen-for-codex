@@ -11,8 +11,8 @@
     <!--
       THESIS: 把一次不透明的配置修改变成可见的连接校准流程，拒绝居中的单字段 SaaS 卡片。
       OWN-WORLD: 日光工作台底色、深蓝结构面、钴蓝操作色、绿色完成态；细刻度、状态灯和整齐的设备铭牌构成组件语言。
-      STORY: 检测 Codex，接收 API Key，验证阿里云线路，安装千问模型，最后明确提示重启。
-      FIRST VIEWPORT: 左侧是持续可见的四段连接路线，右侧以大标题、唯一输入框和主按钮占据操作中心，结果在原位接替表单。
+      STORY: 检测 Codex，选择接入范围，接收 API Key，验证阿里云线路，安装模型目录，最后明确提示重启。
+      FIRST VIEWPORT: 左侧是持续可见的四段连接路线，右侧以大标题、双模式选择、唯一密钥输入框和主按钮构成操作中心，结果在原位接替表单。
       FORM: 连接校准台，候选方向 4，seed 60075376。
       FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
     -->
@@ -38,19 +38,19 @@
           <ol class="route" id="routeList">
             <li class="route-step is-active" data-step="1">
               <span class="step-index" aria-hidden="true">1</span>
-              <span><strong>识别 Codex</strong><small>确认配置位置</small></span>
+              <span><strong><span class="wide-label">识别 Codex</span><span class="compact-label">识别 Codex</span></strong><small>确认配置位置</small></span>
             </li>
             <li class="route-step" data-step="2">
               <span class="step-index" aria-hidden="true">2</span>
-              <span><strong>检测 API Key</strong><small>向阿里云发送最小测试</small></span>
+              <span><strong><span class="wide-label">检测 API Key</span><span class="compact-label">验证 Key</span></strong><small>向阿里云发送最小测试</small></span>
             </li>
             <li class="route-step" data-step="3">
               <span class="step-index" aria-hidden="true">3</span>
-              <span><strong>安装千问模型</strong><small>自动备份并写入配置</small></span>
+              <span><strong><span class="wide-label">安装模型目录</span><span class="compact-label">安装模型</span></strong><small>自动备份并写入配置</small></span>
             </li>
             <li class="route-step" data-step="4">
               <span class="step-index" aria-hidden="true">4</span>
-              <span><strong>重新打开 Codex</strong><small>原生模型列表立即生效</small></span>
+              <span><strong><span class="wide-label">重新打开 Codex</span><span class="compact-label">重启 Codex</span></strong><small>原生模型列表立即生效</small></span>
             </li>
           </ol>
 
@@ -64,11 +64,32 @@
 
         <section class="setup-panel" aria-labelledby="pageTitle">
           <div id="setupView">
-            <h1 id="pageTitle">让 Codex 用上千问</h1>
-            <p class="lead">粘贴阿里云百炼 API Key。检测、备份和模型安装都由我们完成。</p>
+            <h1 id="pageTitle">让 Codex 用上更多模型</h1>
+            <p class="lead">一个阿里云百炼 API Key，可只接入千问，也可一次加入 Qwen、DeepSeek 和 GLM。</p>
 
             <form id="setupForm" novalidate>
-              <label for="apiKey">阿里云百炼 API Key</label>
+              <fieldset class="mode-picker" aria-describedby="modeHelp">
+                <legend>选择接入方式</legend>
+                <div class="mode-options">
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="aggregate" checked />
+                    <span class="mode-copy">
+                      <span class="mode-title"><strong>聚合模型</strong><span class="mode-badge">推荐</span></span>
+                      <span>Qwen、DeepSeek、GLM 一次加入</span>
+                    </span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="direct" />
+                    <span class="mode-copy">
+                      <span class="mode-title"><strong>仅千问</strong></span>
+                      <span>保持精简，只显示千问模型</span>
+                    </span>
+                  </label>
+                </div>
+                <p class="mode-help" id="modeHelp">两种方式都只需要一个百炼 Key，调用费用进入同一个阿里云账号。</p>
+              </fieldset>
+
+              <label class="key-label" for="apiKey">阿里云百炼 API Key</label>
               <div class="key-field">
                 <input
                   id="apiKey"
@@ -89,7 +110,7 @@
               </div>
 
               <button class="primary-button" id="installButton" type="submit">
-                <span class="button-label">立即接入 Codex</span>
+                <span class="button-label">接入全部模型</span>
                 <span class="button-progress" aria-hidden="true"></span>
               </button>
               <p class="form-message" id="formMessage" role="alert" aria-live="polite"></p>
@@ -97,12 +118,12 @@
 
             <div class="installed-note" id="installedNote" hidden>
               <div>
-                <strong>这台电脑已接入千问</strong>
-                <p>重新输入 Key 可以更新凭据，不会重复添加配置。</p>
+                <strong id="installedTitle">当前已接入：聚合模型</strong>
+                <p id="installedText">重新输入 Key 可更新凭据；切换模式只会替换本工具的模型列表。</p>
               </div>
               <button class="text-button" id="showRestore" type="button">恢复原来的 Codex 配置</button>
               <div class="restore-confirm" id="restoreConfirm" hidden>
-                <p>只移除本工具添加的千问配置，其他 Codex 设置会保留。</p>
+                <p>只移除本工具添加的模型配置，其他 Codex 设置会保留。</p>
                 <div>
                   <button class="secondary-button" id="cancelRestore" type="button">取消</button>
                   <button class="danger-button" id="restoreButton" type="button">确认恢复</button>
@@ -110,17 +131,12 @@
               </div>
             </div>
 
-            <div class="model-bench" aria-labelledby="modelsTitle">
+            <div class="model-bench" aria-labelledby="modelsTitle" aria-live="polite" aria-atomic="true">
               <div class="bench-heading">
-                <h2 id="modelsTitle">将出现在模型列表中</h2>
-                <span>4 个模型</span>
+                <h2 id="modelsTitle">将出现在 Codex 中</h2>
+                <span id="modelCount">正在读取…</span>
               </div>
-              <ul>
-                <li><strong>Qwen 3.8 Max</strong><span>复杂代码与长任务</span></li>
-                <li><strong>Qwen 3.8 Flash</strong><span>日常开发，响应更快</span></li>
-                <li><strong>Qwen 3.7 Plus</strong><span>能力与成本均衡</span></li>
-                <li><strong>Qwen 3.7 Flash</strong><span>简单修改与高频任务</span></li>
-              </ul>
+              <ul id="modelList"></ul>
             </div>
           </div>
 
@@ -128,14 +144,14 @@
             <div class="success-signal" aria-hidden="true">
               <svg viewBox="0 0 64 64"><path d="m18 33 9 9 20-22" /></svg>
             </div>
-            <h1>千问已经接入 Codex</h1>
-            <p>配置和 API Key 都已安全保存。现在只差最后一步。</p>
+            <h1 id="successTitle">聚合模型已经接入 Codex</h1>
+            <p id="successSummary">配置和 API Key 已保存到这台电脑。现在只差最后一步。</p>
             <div class="restart-instruction">
               <span>关闭 Codex</span>
               <svg viewBox="0 0 40 20" aria-hidden="true"><path d="M2 10h34M29 3l7 7-7 7" /></svg>
               <span>重新打开</span>
             </div>
-            <p class="restart-note">重新打开后，默认使用 Qwen 3.8 Max。点击输入框下方的模型名称，可以切换其他千问模型。</p>
+            <p class="restart-note" id="restartNote">重新打开后，默认使用 Qwen 3.8 Max，可在模型菜单切换其他模型。</p>
           </div>
         </section>
       </main>

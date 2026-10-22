@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -26,19 +27,23 @@ SOURCE_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from lib.config_manager import (  # noqa: E402
+    DEFAULT_MODE,
     PUBLIC_ENDPOINTS,
+    VALID_MODES,
     ConfigError,
+    OperationBusyError,
     codex_home,
     install,
     runtime_dir,
     status,
     uninstall,
 )
+from lib.credential_store import CredentialError  # noqa: E402
 
 
 DEFAULT_BASE_URL = PUBLIC_ENDPOINTS["beijing"]
 DEFAULT_MODEL = "qwen3.8-max"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MAX_BODY = 64 * 1024
 SERVER_LIFETIME_SECONDS = 20 * 60
 
@@ -109,6 +114,7 @@ class SetupServer(ThreadingHTTPServer):
         self.source_root = SOURCE_ROOT
         self.started_at = time.monotonic()
         self.last_activity = time.monotonic()
+        self.mutation_lock = threading.Lock()
 
 
 class SetupHandler(BaseHTTPRequestHandler):
@@ -116,7 +122,13 @@ class SetupHandler(BaseHTTPRequestHandler):
     server_version = f"QwenForCodexSetup/{VERSION}"
 
     def log_message(self, format: str, *args: object) -> None:
-        safe_args = tuple("<redacted>" if "sk-" in str(arg) else arg for arg in args)
+        def redact(value: object) -> object:
+            if not isinstance(value, str):
+                return value
+            safe = re.sub(r"([?&]token=)[^&\s]+", r"\1<redacted>", value, flags=re.IGNORECASE)
+            return re.sub(r"\bsk-[A-Za-z0-9._-]+", "<redacted>", safe)
+
+        safe_args = tuple(redact(arg) for arg in args)
         super().log_message(format, *safe_args)
 
     def _security_headers(self, content_type: str) -> None:
@@ -185,9 +197,12 @@ class SetupHandler(BaseHTTPRequestHandler):
         if length <= 0 or length > MAX_BODY:
             raise SetupError("请求内容大小异常")
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SetupError("请求格式错误") from exc
+        if not isinstance(payload, dict):
+            raise SetupError("请求格式错误")
+        return payload
 
     def do_GET(self) -> None:
         self.server.last_activity = time.monotonic()
@@ -220,7 +235,21 @@ class SetupHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "message": "页面已失效，请重新打开设置。"})
                 return
-            self._send_json(HTTPStatus.OK, {"ok": True, **status(self.server.codex_home)})
+            try:
+                result = status(self.server.codex_home, self.server.source_root)
+            except (ConfigError, CredentialError) as exc:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"ok": False, "message": _safe_message(str(exc))},
+                )
+                return
+            except Exception:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"ok": False, "message": "无法读取 Codex 当前状态，请重新打开设置后再试。"},
+                )
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True, **result})
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -229,10 +258,22 @@ class SetupHandler(BaseHTTPRequestHandler):
         if not self._valid_local_request() or not self._authorized():
             self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "message": "页面已失效，请重新打开设置。"})
             return
+        if self.path not in {"/api/install", "/api/uninstall"}:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "message": "请求不存在"})
+            return
+        if not self.server.mutation_lock.acquire(blocking=False):
+            self._send_json(
+                HTTPStatus.CONFLICT,
+                {"ok": False, "message": "另一个配置操作正在进行，请稍后再试。"},
+            )
+            return
         try:
             if self.path == "/api/install":
                 payload = self._read_json()
                 api_key = str(payload.get("api_key", "")).strip()
+                raw_mode = payload.get("mode", DEFAULT_MODE)
+                if not isinstance(raw_mode, str) or raw_mode not in VALID_MODES:
+                    raise SetupError("接入方式无效，请刷新设置页后重试。")
                 validate_api_key(api_key)
                 result = install(
                     home=self.server.codex_home,
@@ -240,21 +281,35 @@ class SetupHandler(BaseHTTPRequestHandler):
                     api_key=api_key,
                     base_url=DEFAULT_BASE_URL,
                     model=DEFAULT_MODEL,
+                    mode=raw_mode,
                 )
                 self._send_json(HTTPStatus.OK, {"ok": True, **result})
                 threading.Timer(120, self.server.shutdown).start()
             elif self.path == "/api/uninstall":
                 result = uninstall(self.server.codex_home)
                 self._send_json(HTTPStatus.OK, {"ok": True, **result})
-            else:
-                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "message": "请求不存在"})
+        except OperationBusyError as exc:
+            self._send_json(HTTPStatus.CONFLICT, {"ok": False, "message": _safe_message(str(exc))})
         except (SetupError, ConfigError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": _safe_message(str(exc))})
+        except CredentialError as exc:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "ok": False,
+                    "message": (
+                        "系统凭据库无法保存或删除 API Key，本次操作已停止。"
+                        f"{_safe_message(str(exc))} 请解锁系统凭据库后重试。"
+                    ),
+                },
+            )
         except Exception:
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "message": "安装没有完成，原配置未被替换。请重新打开设置后再试。"},
+                {"ok": False, "message": "操作没有完成，请重新打开设置后再试；如仍失败，请使用备份恢复。"},
             )
+        finally:
+            self.server.mutation_lock.release()
 
 
 def serve(home: Path, ready_file: Path | None = None) -> int:
@@ -341,7 +396,7 @@ def main() -> int:
     args = parser.parse_args()
     home = codex_home(args.codex_home)
     if args.status:
-        print(json.dumps(status(home), ensure_ascii=False, indent=2))
+        print(json.dumps(status(home, SOURCE_ROOT), ensure_ascii=False, indent=2))
         return 0
     if args.uninstall:
         print(json.dumps(uninstall(home), ensure_ascii=False, indent=2))

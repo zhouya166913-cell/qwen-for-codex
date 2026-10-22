@@ -179,16 +179,26 @@ def store_secret(secret: str, runtime_dir: Path, allow_file_fallback: bool = Tru
 
 def read_secret(runtime_dir: Path) -> str | None:
     try:
-        system = platform.system()
-        if system == "Windows":
-            value = _read_windows()
-        elif system == "Darwin":
-            value = _read_macos()
-        else:
-            value = None
-        return value or _read_private_file(runtime_dir)
+        return read_secret_for_update(runtime_dir)
     except (CredentialError, OSError, subprocess.SubprocessError):
         return _read_private_file(runtime_dir)
+
+
+def read_secret_for_update(runtime_dir: Path) -> str | None:
+    """Read the current secret without hiding native credential-store failures.
+
+    Configuration updates use this strict variant so they never overwrite an
+    existing credential unless it can first be snapshotted for rollback.
+    """
+
+    system = platform.system()
+    if system == "Windows":
+        value = _read_windows()
+    elif system == "Darwin":
+        value = _read_macos()
+    else:
+        value = None
+    return value or _read_private_file(runtime_dir)
 
 
 def delete_secret(runtime_dir: Path) -> None:
